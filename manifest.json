@@ -1,0 +1,76 @@
+{
+  "name": "Scrape-Test",
+  "version": "1.0.0",
+  "scrapers": [
+    {
+      "id": "anidap",
+      "name": "AniDap",
+      "description": "AniDap anime provider with sub and dub support via TMDB metadata and direct HLS/MP4 streams.",
+      "version": "1.0.0",
+      "author": "Scrape-Test",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/anidap.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=300&q=80",
+      "contentLanguage": ["en", "ja"]
+    },
+    {
+      "id": "miruro",
+      "name": "Miruro",
+      "description": "Miruro provider for anime, movies and TV with sub/dub stream variants.",
+      "version": "1.0.0",
+      "author": "Scrape-Test",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/miruro.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=300&q=80",
+      "contentLanguage": ["en", "ja"]
+    },
+    {
+      "id": "animepahe",
+      "name": "AnimePahe",
+      "description": "AnimePahe provider with direct HLS streams and dual-language subtitle support.",
+      "version": "1.0.0",
+      "author": "Scrape-Test",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/animepahe.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&w=300&q=80",
+      "contentLanguage": ["en", "ja"]
+    },
+    {
+      "id": "cineby",
+      "name": "Cineby",
+      "description": "Cineby movie and anime provider with TMDB lookup and sub/dub stream variants.",
+      "version": "1.0.0",
+      "author": "Scrape-Test",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/cineby.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://images.unsplash.com/photo-1478720568477-152d9b164e26?auto=format&fit=crop&w=300&q=80",
+      "contentLanguage": ["en", "ja"]
+    },
+    {
+      "id": "nepu",
+      "name": "Nepu",
+      "description": "Nepu anime provider with dual audio support and TMDB-backed metadata.",
+      "version": "1.0.0",
+      "author": "Scrape-Test",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/nepu.js",
+      "enabled": true,
+      "hasSettings": true,
+      "formats": ["m3u8", "mp4"],
+      "logo": "https://images.unsplash.com/photo-1497032628192-86f99bcd76bc?auto=format&fit=crop&w=300&q=80",
+      "contentLanguage": ["en", "ja"]
+    }
+  ]
+}
