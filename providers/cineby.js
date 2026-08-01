@@ -43,9 +43,16 @@ function customSearchParser(html, context) {
   return valid;
 }
 
-async function getStreams(item, type = 'tv', _season = 1, _episode = 1) {
+async function getStreams(item, type = 'tv', season = 1, episode = 1) {
   try {
-    const rawQuery = item && (item.title || item.name || item.query || item.search || 'anime');
+    const rawBase = item && (item.title || item.name || item.query || item.search || 'anime');
+    const qualityHint = item && (item.quality || item.resolution || item.format || '');
+    const languageHint = item && (item.language || item.audio || item.lang || '');
+    let rawQuery = String(rawBase || '').trim() || 'anime';
+    if (type === 'tv' && Number(season) > 0) rawQuery = `${rawQuery} Season ${season}`;
+    if (Number(episode) > 0) rawQuery = `${rawQuery} Episode ${episode}`;
+    if (languageHint) rawQuery = `${rawQuery} ${languageHint}`;
+    if (qualityHint) rawQuery = `${rawQuery} ${qualityHint}`;
     const metadata = await fetchTmdbMetadata(rawQuery, type);
     const query = metadata && metadata.title ? metadata.title : rawQuery;
     const results = await searchSite({
@@ -62,16 +69,4 @@ async function getStreams(item, type = 'tv', _season = 1, _episode = 1) {
   }
 }
 
-const __provider = { getStreams };
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = __provider;
-}
-if (typeof globalThis !== 'undefined') {
-  globalThis.getStreams = __provider.getStreams;
-}
-if (typeof global !== 'undefined') {
-  global.getStreams = __provider.getStreams;
-}
-if (typeof self !== 'undefined') {
-  self.getStreams = __provider.getStreams;
-}
+module.exports = { getStreams };
