@@ -1,4 +1,4 @@
-const { fetchTmdbMetadata, searchSite, parseSiteStreamUrls } = require('./shared');
+const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks } = require('./shared');
 
 const PROVIDER_NAME = 'AniDap';
 const BASE_URL = 'https://anidap.lol';
@@ -11,10 +11,20 @@ const SEARCH_PATHS = [
 ];
 
 function customSearchParser(html, context) {
-  return parseSiteStreamUrls(html, {
-    baseUrl: context.baseUrl,
-    title: context.title
-  }).filter((entry) => /m3u8|mp4|mpd|manifest/i.test(entry.url));
+  const directUrls = extractUrlsFromText(html);
+  const detailUrls = extractDetailLinks(html, context.baseUrl);
+  const combined = [...directUrls, ...detailUrls];
+  const valid = [];
+
+  for (const entry of combined) {
+    const value = String(entry || '').trim();
+    if (!value) continue;
+    if (/m3u8|mp4|mpd|manifest/i.test(value)) {
+      valid.push({ url: value, title: context.title });
+    }
+  }
+
+  return valid;
 }
 
 async function getStreams(item, type = 'tv', _season = 1, _episode = 1) {

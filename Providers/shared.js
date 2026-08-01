@@ -63,7 +63,6 @@ function detectLanguageVariants(text = '', url = '') {
   const source = `${String(text || '')} ${String(url || '')}`.toLowerCase();
   const hasDub = /(dub|dubs|dubbed|voiceover|vo)/i.test(source) || /(?:^|[\-_])dub(?:[\-_]|$)/i.test(source);
   const hasSub = /(sub|subs|subbed|subtitle|subtitles|cc)/i.test(source) || /(?:^|[\-_])sub(?:[\-_]|$)/i.test(source);
-
   if (hasDub && hasSub) return ['sub', 'dub'];
   if (hasDub) return ['dub'];
   if (hasSub) return ['sub'];
@@ -97,9 +96,26 @@ function dedupeStreams(items = []) {
   return output;
 }
 
+function isLikelyStreamUrl(value = '') {
+  const text = String(value || '').trim();
+  if (!text || text.length < 10) return false;
+  if (!/^https?:/i.test(text) && !text.startsWith('//')) return false;
+  return /(?:\.m3u8|\.mp4|\.mpd|\.mkv|\.webm|master\.m3u8|playlist|manifest)/i.test(text) || /(?:m3u8|mp4|mpd)/i.test(text);
+}
+
+function cleanUrl(raw = '') {
+  const value = String(raw || '').trim().replace(/&amp;/g, '&');
+  if (!value) return '';
+  const trimmed = value.replace(/[),\]>"']+$/g, '').replace(/\.$/, '');
+  if (/^(https?:)?\/\//i.test(trimmed)) {
+    return trimmed.startsWith('http') ? trimmed : `https:${trimmed}`;
+  }
+  return trimmed;
+}
+
 function buildStream({ url, providerName, baseUrl, language = 'sub', format = 'm3u8', title = '' }) {
-  const streamUrl = String(url || '').trim();
-  if (!streamUrl) return null;
+  const streamUrl = cleanUrl(url);
+  if (!streamUrl || !isLikelyStreamUrl(streamUrl)) return null;
   const rawLanguage = String(language || 'sub').toLowerCase();
   let lang = rawLanguage === 'dub' ? 'dub' : 'sub';
   const variants = detectLanguageVariants(title, streamUrl);
@@ -133,25 +149,11 @@ function buildLanguageVariants({ url, providerName, baseUrl, format = 'm3u8', ti
   const variants = detectLanguageVariants(title, url);
   const results = [];
   for (const variant of variants) {
-    const stream = buildStream({
-      url,
-      providerName,
-      baseUrl,
-      language: variant,
-      format,
-      title
-    });
+    const stream = buildStream({ url, providerName, baseUrl, language: variant, format, title });
     if (stream) results.push(stream);
   }
   if (!results.length) {
-    const stream = buildStream({
-      url,
-      providerName,
-      baseUrl,
-      language: 'sub',
-      format,
-      title
-    });
+    const stream = buildStream({ url, providerName, baseUrl, language: 'sub', format, title });
     if (stream) results.push(stream);
   }
   return results;
@@ -169,75 +171,97 @@ function makeAbsoluteUrl(baseUrl, href) {
   return `${String(baseUrl).replace(/\/+$/, '')}/${trimmed}`;
 }
 
-function parseSiteStreamUrls(rawText = '', options = {}) {
+function extractUrlsFromText(rawText = '') {
   const text = String(rawText || '');
   if (!text) return [];
-  const { baseUrl = '', title = '' } = options;
+
   const patterns = [
-    /https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4|mpd)(?:\?[^\s"'<>]*)?/gi,
-    /https?:\/\/[^\s"'<>]+(?:master|playlist|manifest)[^\s"'<>]*?(?:m3u8|mp4|mpd)?/gi,
-    /(?:"|')((?:https?:\/\/|\/)[^"'\s<>]+(?:m3u8|mp4|mpd)(?:\?[^"'\s<>]*)?)/gi,
-    /href=["']([^"']+)["']/gi,
-    /src=["']([^"']+)["']/gi
+    /https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4|mpd|mkv|webm)(?:\?[^\s"'<>]*)?/gi,
+    /https?:\/\/[^\s"'<>]+(?:master|playlist|manifest)[^\s"'<>]*?(?:m3u8|mp4|mpd|mkv|webm)?/gi,
+    /(?:"|')((?:https?:\/\/|\/)[^"'\s<>]+(?:m3u8|mp4|mpd|mkv|webm)(?:\?[^"'\s<>]*)?)/gi,
+    /(?:src|href|data-src|data-url|file)\s*[:=]\s*["']([^"']+)["']/gi,
+    /(?:https?:\/\/|\/)[^\s"'<>]*\.(?:m3u8|mp4|mpd)(?:\?[^\s"'<>]*)?/gi
   ];
 
   const seen = new Set();
-  const results = [];
+  const output = [];
 
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       const rawCandidate = String(match[1] || match[0] || '').replace(/[),\]>"']+$/g, '');
-      if (!rawCandidate) continue;
-      const normalizedCandidate = rawCandidate.replace(/&amp;/g, '&');
-      const candidate = /(m3u8|mp4|mpd|manifest)/i.test(normalizedCandidate) ? normalizedCandidate : '';
-      if (!candidate) continue;
-      const resolved = candidate.startsWith('http') ? candidate : makeAbsoluteUrl(baseUrl, candidate);
-      const finalUrl = resolved && resolved.includes('http') ? resolved : '';
-      if (!finalUrl || seen.has(finalUrl)) continue;
-      seen.add(finalUrl);
-      results.push({ url: finalUrl, title });
+      const cleaned = cleanUrl(rawCandidate);
+      if (!cleaned || !isLikelyStreamUrl(cleaned) || seen.has(cleaned)) continue;
+      seen.add(cleaned);
+      output.push(cleaned);
     }
   }
 
-  return results;
+  return output;
 }
 
-function buildSearchUrls(baseUrl, title, type = 'tv', extraPaths = []) {
+function extractDetailLinks(rawText = '', baseUrl = '') {
+  const text = String(rawText || '');
+  if (!text) return [];
+  const matches = [...text.matchAll(/href\s*=\s*["']([^"']+)["']/gi)];
+  const links = [];
+  const seen = new Set();
+
+  for (const match of matches) {
+    const candidate = String(match[1] || '').trim();
+    if (!candidate || candidate.startsWith('javascript:') || candidate.startsWith('mailto:')) continue;
+    const resolved = makeAbsoluteUrl(baseUrl, candidate);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    if (/\.(?:png|jpg|jpeg|gif|webp|svg|css|js)(?:\?|$)/i.test(resolved)) continue;
+    if (/(watch|anime|movie|play|episode|video|embed|stream|search)/i.test(resolved) || /\/[^/]+$/i.test(resolved)) {
+      links.push(resolved);
+    }
+  }
+
+  return links.slice(0, 30);
+}
+
+function searchUrlsForTitle(baseUrl, title, extraPaths = []) {
   const cleaned = normalizeTitle(title);
   const root = String(baseUrl || '').replace(/\/+$/, '');
-  const terms = [cleaned, cleaned.replace(/\s+/g, '-'), cleaned.toLowerCase()];
+  const q = encodeURIComponent(cleaned.replace(/\s+/g, '+'));
   const urls = new Set();
 
   if (!root || !cleaned) return [];
 
-  for (const term of terms) {
-    if (!term) continue;
-    const encoded = encodeURIComponent(term);
-    const q = term.replace(/\s+/g, '+');
-    const candidates = [
-      `${root}/?s=${q}`,
-      `${root}/search?q=${q}`,
-      `${root}/search/${encoded}`,
-      `${root}/search?keyword=${q}`,
-      `${root}/anime?search=${q}`,
-      `${root}/?search=${q}`,
-      `${root}/api/search?q=${q}`,
-      `${root}/api/search?query=${q}`
-    ];
+  const variants = [
+    cleaned,
+    cleaned.replace(/\s+/g, '-'),
+    cleaned.toLowerCase(),
+    cleaned.replace(/\s+/g, '+')
+  ];
 
+  for (const variant of variants) {
+    const encoded = encodeURIComponent(variant);
+    const plain = variant.replace(/\s+/g, '+');
+    const candidates = [
+      `${root}/?s=${plain}`,
+      `${root}/search?q=${plain}`,
+      `${root}/search/${encoded}`,
+      `${root}/search?keyword=${plain}`,
+      `${root}/anime?search=${plain}`,
+      `${root}/movie?search=${plain}`,
+      `${root}/api/search?q=${plain}`,
+      `${root}/api/search?query=${plain}`
+    ];
     for (const entry of candidates) urls.add(entry);
   }
 
   if (Array.isArray(extraPaths) && extraPaths.length) {
-    const q = encodeURIComponent(cleaned.replace(/\s+/g, '+'));
     for (const pattern of extraPaths) {
-      const entry = pattern.includes('{q}') ? pattern.replace('{q}', q).replace(/\+/, '%20') : `${root}${pattern}`;
-      urls.add(entry);
+      let entry = pattern;
+      if (pattern.includes('{q}')) {
+        entry = pattern.replace('{q}', q);
+      } else if (pattern.includes('search') || pattern.includes('query') || pattern.includes('s=')) {
+        entry = pattern.replace('{q}', q).replace(/\{q\}/g, q);
+      }
+      urls.add(`${root}${entry}`);
     }
-  }
-
-  if (type === 'movie') {
-    urls.add(`${root}/movie?search=${encodeURIComponent(cleaned)}`);
   }
 
   return [...urls];
@@ -267,11 +291,59 @@ async function fetchTmdbMetadata(title, type = 'tv') {
   }
 }
 
+async function resolveSearchPage(url, baseUrl, title, providerName, formatGuess = 'm3u8') {
+  const html = await fetchText(url, {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+  });
+  const directUrls = extractUrlsFromText(html);
+  const detailLinks = extractDetailLinks(html, baseUrl);
+  const items = [];
+
+  for (const directUrl of directUrls) {
+    items.push({ url: directUrl, title });
+  }
+
+  for (const detailLink of detailLinks) {
+    try {
+      const detailHtml = await fetchText(detailLink, {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      });
+      const nested = extractUrlsFromText(detailHtml);
+      for (const nestedUrl of nested) {
+        items.push({ url: nestedUrl, title });
+      }
+    } catch (error) {
+      // continue
+    }
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of items) {
+    const normalized = cleanUrl(item.url);
+    if (!normalized || !isLikelyStreamUrl(normalized) || seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push({ url: normalized, title: item.title || title });
+  }
+
+  return unique.slice(0, 12).map((item) => {
+    const stream = buildStream({
+      url: item.url,
+      providerName,
+      baseUrl,
+      language: 'sub',
+      format: formatGuess,
+      title: item.title
+    });
+    return stream || { url: item.url, title: item.title };
+  });
+}
+
 async function searchSite({ providerName, baseUrl, title, type = 'tv', extraPaths = [], parser }) {
   const cleaned = normalizeTitle(title);
   if (!cleaned) return [];
 
-  const urls = buildSearchUrls(baseUrl, cleaned, type, extraPaths);
+  const urls = searchUrlsForTitle(baseUrl, cleaned, extraPaths);
   const discovered = new Set();
   const results = [];
 
@@ -280,18 +352,24 @@ async function searchSite({ providerName, baseUrl, title, type = 'tv', extraPath
       const html = await fetchText(entry, {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       });
-      const extracted = typeof parser === 'function'
-        ? parser(html, { providerName, baseUrl, title: cleaned, type, extraPaths })
-        : parseSiteStreamUrls(html, { baseUrl, title: cleaned });
 
-      for (const item of extracted) {
+      let parsed = [];
+      if (typeof parser === 'function') {
+        parsed = parser(html, { providerName, baseUrl, title: cleaned, type, extraPaths }) || [];
+      }
+
+      if (!parsed.length) {
+        parsed = await resolveSearchPage(entry, baseUrl, cleaned, providerName);
+      }
+
+      for (const item of parsed) {
         const finalUrl = item && item.url ? item.url : String(item || '');
-        const normalizedUrl = finalUrl.startsWith('http') ? finalUrl : makeAbsoluteUrl(baseUrl, finalUrl);
-        if (!normalizedUrl || discovered.has(normalizedUrl)) continue;
-        discovered.add(normalizedUrl);
-        const format = normalizedUrl.includes('.m3u8') ? 'm3u8' : (normalizedUrl.includes('.mpd') ? 'mpd' : 'mp4');
+        const normalized = cleanUrl(finalUrl);
+        if (!normalized || discovered.has(normalized)) continue;
+        discovered.add(normalized);
+        const format = normalized.includes('.m3u8') ? 'm3u8' : (normalized.includes('.mpd') ? 'mpd' : 'mp4');
         const streamVariants = buildLanguageVariants({
-          url: normalizedUrl,
+          url: normalized,
           providerName,
           baseUrl,
           format,
@@ -302,7 +380,7 @@ async function searchSite({ providerName, baseUrl, title, type = 'tv', extraPath
 
       if (results.length >= 8) break;
     } catch (error) {
-      // keep trying other URLs
+      // Keep trying all provider search variants.
     }
   }
 
@@ -325,10 +403,13 @@ module.exports = {
   buildStream,
   buildLanguageVariants,
   dedupeStreams,
-  parseSiteStreamUrls,
-  extractMediaUrls,
+  extractUrlsFromText,
+  extractDetailLinks,
   fetchTmdbMetadata,
-  buildSearchUrls,
+  searchUrlsForTitle,
+  resolveSearchPage,
   searchSite,
-  makeAbsoluteUrl
+  makeAbsoluteUrl,
+  cleanUrl,
+  isLikelyStreamUrl
 };
