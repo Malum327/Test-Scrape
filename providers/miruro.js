@@ -1,26 +1,40 @@
-const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks } = require('./shared');
+const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks, makeAbsoluteUrl } = require('./shared');
 
 const PROVIDER_NAME = 'Miruro';
 const BASE_URL = 'https://www.miruro.tv';
 const SEARCH_PATHS = [
   '/search?query={q}',
+  '/search?q={q}',
   '/api/search?query={q}',
   '/api/search?q={q}',
-  '/anime?search={q}'
+  '/anime?search={q}',
+  '/watch?query={q}'
 ];
 
 function customSearchParser(html, context) {
-  const directUrls = extractUrlsFromText(html);
-  const detailUrls = extractDetailLinks(html, context.baseUrl);
-  const combined = [...directUrls, ...detailUrls];
+  const text = String(html || '');
+  const directUrls = extractUrlsFromText(text);
+  const detailLinks = extractDetailLinks(text, context.baseUrl);
+  const watchLinks = detailLinks.filter((link) => /(?:\/watch\/|\/info\/|\/anime\/|play=true|episode)/i.test(link));
+  const rawCandidates = [...directUrls, ...watchLinks];
   const valid = [];
+  const seen = new Set();
 
-  for (const entry of combined) {
-    const value = String(entry || '').trim();
-    if (!value) continue;
-    if (/m3u8|mp4|mpd|manifest/i.test(value)) {
-      valid.push({ url: value, title: context.title });
+  for (const value of rawCandidates) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (/m3u8|mp4|mpd|manifest/i.test(normalized)) {
+      valid.push({ url: normalized, title: context.title });
     }
+  }
+
+  const watchPatternMatches = [...text.matchAll(/https?:\/\/[^\s"'<>]*\/watch\/[^\s"'<>]*/gi)];
+  for (const match of watchPatternMatches) {
+    const candidate = String(match[0] || '').trim();
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    valid.push({ url: candidate, title: context.title });
   }
 
   return valid;

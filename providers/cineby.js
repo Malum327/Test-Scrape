@@ -1,4 +1,4 @@
-const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks } = require('./shared');
+const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks, makeAbsoluteUrl } = require('./shared');
 
 const PROVIDER_NAME = 'Cineby';
 const BASE_URL = 'https://www.cineby.at';
@@ -7,21 +7,37 @@ const SEARCH_PATHS = [
   '/search?q={q}',
   '/search/{q}',
   '/movie?search={q}',
+  '/tv?search={q}',
   '/watch?search={q}'
 ];
 
 function customSearchParser(html, context) {
-  const directUrls = extractUrlsFromText(html);
-  const detailUrls = extractDetailLinks(html, context.baseUrl);
-  const combined = [...directUrls, ...detailUrls];
+  const text = String(html || '');
+  const directUrls = extractUrlsFromText(text);
+  const detailLinks = extractDetailLinks(text, context.baseUrl);
+  const playLinks = [...detailLinks, ...[...text.matchAll(/https?:\/\/[^\s"'<>]*?(?:\/movie\/|\/tv\/)[^\s"'<>]*?\?(?:play=true|play=true&[^\s"'<>]*)/gi)].map((m) => m[0])];
+  const rawCandidates = [...directUrls, ...playLinks];
   const valid = [];
+  const seen = new Set();
 
-  for (const entry of combined) {
-    const value = String(entry || '').trim();
-    if (!value) continue;
-    if (/m3u8|mp4|mpd|manifest/i.test(value)) {
-      valid.push({ url: value, title: context.title });
+  for (const value of rawCandidates) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (/m3u8|mp4|mpd|manifest/i.test(normalized)) {
+      valid.push({ url: normalized, title: context.title });
     }
+    if (/(?:\/movie\/|\/tv\/|play=true)/i.test(normalized)) {
+      valid.push({ url: normalized, title: context.title });
+    }
+  }
+
+  const playUrlMatches = [...text.matchAll(/https?:\/\/[^\s"'<>]*\/(?:movie|tv)\/\d+\?play=true/gi)];
+  for (const match of playUrlMatches) {
+    const candidate = String(match[0] || '').trim();
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    valid.push({ url: candidate, title: context.title });
   }
 
   return valid;

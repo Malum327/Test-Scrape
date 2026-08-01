@@ -1,4 +1,4 @@
-const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks } = require('./shared');
+const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks, makeAbsoluteUrl } = require('./shared');
 
 const PROVIDER_NAME = 'Nepu';
 const BASE_URL = 'https://nepu.to';
@@ -7,20 +7,35 @@ const SEARCH_PATHS = [
   '/search?q={q}',
   '/api/search?q={q}',
   '/anime?q={q}',
-  '/anime?search={q}'
+  '/anime?search={q}',
+  '/watch?query={q}'
 ];
 
 function customSearchParser(html, context) {
-  const directUrls = extractUrlsFromText(html);
-  const detailUrls = extractDetailLinks(html, context.baseUrl);
-  const combined = [...directUrls, ...detailUrls];
+  const text = String(html || '');
+  const directUrls = extractUrlsFromText(text);
+  const detailLinks = extractDetailLinks(text, context.baseUrl);
+  const rawCandidates = [...directUrls, ...detailLinks];
   const valid = [];
+  const seen = new Set();
 
-  for (const entry of combined) {
-    const value = String(entry || '').trim();
-    if (!value) continue;
-    if (/m3u8|mp4|mpd|manifest/i.test(value)) {
-      valid.push({ url: value, title: context.title });
+  for (const value of rawCandidates) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (/m3u8|mp4|mpd|manifest/i.test(normalized)) {
+      valid.push({ url: normalized, title: context.title });
+    }
+  }
+
+  const searchMatches = [...text.matchAll(/https?:\/\/[^\s"'<>]*?(?:search|watch|anime|api|episode|info)[^\s"'<>]*/gi)];
+  for (const match of searchMatches) {
+    const candidate = String(match[0] || '').trim();
+    const resolved = makeAbsoluteUrl(context.baseUrl, candidate);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    if (/(?:search|watch|anime|api)/i.test(resolved)) {
+      valid.push({ url: resolved, title: context.title });
     }
   }
 

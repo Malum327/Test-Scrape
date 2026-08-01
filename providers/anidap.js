@@ -1,4 +1,4 @@
-const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks } = require('./shared');
+const { fetchTmdbMetadata, searchSite, extractUrlsFromText, extractDetailLinks, makeAbsoluteUrl } = require('./shared');
 
 const PROVIDER_NAME = 'AniDap';
 const BASE_URL = 'https://anidap.lol';
@@ -6,21 +6,38 @@ const SEARCH_PATHS = [
   '/?s={q}',
   '/search?q={q}',
   '/search?keyword={q}',
+  '/search?search={q}',
   '/anime?search={q}',
-  '/watch?search={q}'
+  '/watch?search={q}',
+  '/info?search={q}'
 ];
 
 function customSearchParser(html, context) {
-  const directUrls = extractUrlsFromText(html);
-  const detailUrls = extractDetailLinks(html, context.baseUrl);
-  const combined = [...directUrls, ...detailUrls];
+  const text = String(html || '');
+  const directUrls = extractUrlsFromText(text);
+  const detailLinks = extractDetailLinks(text, context.baseUrl);
+  const watchLinks = detailLinks.filter((link) => /(?:\/watch\/|\/info\/|\/anime\/|\/movie\/|\/tv\/|play=true|embed)/i.test(link));
+  const rawCandidates = [...directUrls, ...watchLinks];
   const valid = [];
+  const seen = new Set();
 
-  for (const entry of combined) {
-    const value = String(entry || '').trim();
-    if (!value) continue;
-    if (/m3u8|mp4|mpd|manifest/i.test(value)) {
-      valid.push({ url: value, title: context.title });
+  for (const value of rawCandidates) {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (/m3u8|mp4|mpd|manifest/i.test(normalized)) {
+      valid.push({ url: normalized, title: context.title });
+    }
+  }
+
+  const explicitMatches = [...text.matchAll(/(?:https?:\/\/|\/)[^\s"'<>]*(?:watch|anime|episode|movie|tv)[^\s"'<>]*/gi)];
+  for (const match of explicitMatches) {
+    const target = String(match[0] || '').trim();
+    const resolved = makeAbsoluteUrl(context.baseUrl, target);
+    if (!resolved || seen.has(resolved)) continue;
+    seen.add(resolved);
+    if (/(?:\/watch\/|\/anime\/|\/movie\/|\/tv\/|play=true|embed)/i.test(resolved)) {
+      valid.push({ url: resolved, title: context.title });
     }
   }
 

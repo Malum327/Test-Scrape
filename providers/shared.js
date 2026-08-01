@@ -96,11 +96,18 @@ function dedupeStreams(items = []) {
   return output;
 }
 
+function isHttpUrl(value = '') {
+  const text = String(value || '').trim();
+  if (!text || text.startsWith('about:') || text.startsWith('data:') || text.startsWith('javascript:')) return false;
+  return /^https?:\/\//i.test(text);
+}
+
 function isLikelyStreamUrl(value = '') {
   const text = String(value || '').trim();
   if (!text || text.length < 10) return false;
-  if (!/^https?:/i.test(text) && !text.startsWith('//')) return false;
-  return /(?:\.m3u8|\.mp4|\.mpd|\.mkv|\.webm|master\.m3u8|playlist|manifest)/i.test(text) || /(?:m3u8|mp4|mpd)/i.test(text);
+  if (!isHttpUrl(text) && !text.startsWith('//')) return false;
+  const normalized = text.startsWith('//') ? `https:${text}` : text;
+  return /(?:\.m3u8|\.mp4|\.mpd|\.mkv|\.webm|master\.m3u8|playlist|manifest)/i.test(normalized) || /(?:m3u8|mp4|mpd)/i.test(normalized);
 }
 
 function cleanUrl(raw = '') {
@@ -110,6 +117,7 @@ function cleanUrl(raw = '') {
   if (/^(https?:)?\/\//i.test(trimmed)) {
     return trimmed.startsWith('http') ? trimmed : `https:${trimmed}`;
   }
+  if (trimmed.startsWith('//')) return `https:${trimmed}`;
   return trimmed;
 }
 
@@ -179,8 +187,10 @@ function extractUrlsFromText(rawText = '') {
     /https?:\/\/[^\s"'<>]+\.(?:m3u8|mp4|mpd|mkv|webm)(?:\?[^\s"'<>]*)?/gi,
     /https?:\/\/[^\s"'<>]+(?:master|playlist|manifest)[^\s"'<>]*?(?:m3u8|mp4|mpd|mkv|webm)?/gi,
     /(?:"|')((?:https?:\/\/|\/)[^"'\s<>]+(?:m3u8|mp4|mpd|mkv|webm)(?:\?[^"'\s<>]*)?)/gi,
-    /(?:src|href|data-src|data-url|file)\s*[:=]\s*["']([^"']+)["']/gi,
-    /(?:https?:\/\/|\/)[^\s"'<>]*\.(?:m3u8|mp4|mpd)(?:\?[^\s"'<>]*)?/gi
+    /(?:src|href|data-src|data-url|file|source)\s*[:=]\s*["']([^"']+)["']/gi,
+    /(?:https?:\/\/|\/)[^\s"'<>]*\.(?:m3u8|mp4|mpd)(?:\?[^\s"'<>]*)?/gi,
+    /"(?:file|src|url|source|hls|mpd|playlist)"\s*:\s*"([^\"]+)"/gi,
+    /'(?:file|src|url|source|hls|mpd|playlist)'\s*:\s*'([^']+)'/gi
   ];
 
   const seen = new Set();
@@ -208,17 +218,17 @@ function extractDetailLinks(rawText = '', baseUrl = '') {
 
   for (const match of matches) {
     const candidate = String(match[1] || '').trim();
-    if (!candidate || candidate.startsWith('javascript:') || candidate.startsWith('mailto:')) continue;
+    if (!candidate || candidate.startsWith('javascript:') || candidate.startsWith('mailto:') || candidate.startsWith('about:')) continue;
     const resolved = makeAbsoluteUrl(baseUrl, candidate);
     if (!resolved || seen.has(resolved)) continue;
     seen.add(resolved);
     if (/\.(?:png|jpg|jpeg|gif|webp|svg|css|js)(?:\?|$)/i.test(resolved)) continue;
-    if (/(watch|anime|movie|play|episode|video|embed|stream|search)/i.test(resolved) || /\/[^/]+$/i.test(resolved)) {
+    if (/(watch|anime|movie|tv|play|episode|video|embed|stream|search|api)/i.test(resolved) || /\/[^/]+$/i.test(resolved)) {
       links.push(resolved);
     }
   }
 
-  return links.slice(0, 30);
+  return links.slice(0, 40);
 }
 
 function searchUrlsForTitle(baseUrl, title, extraPaths = []) {
@@ -247,7 +257,8 @@ function searchUrlsForTitle(baseUrl, title, extraPaths = []) {
       `${root}/anime?search=${plain}`,
       `${root}/movie?search=${plain}`,
       `${root}/api/search?q=${plain}`,
-      `${root}/api/search?query=${plain}`
+      `${root}/api/search?query=${plain}`,
+      `${root}/search?search=${plain}`
     ];
     for (const entry of candidates) urls.add(entry);
   }
@@ -304,14 +315,14 @@ async function resolveSearchPage(url, baseUrl, title, providerName, formatGuess 
   }
 
   for (const detailLink of detailLinks) {
+    const watchUrl = String(detailLink || '').trim();
+    if (!watchUrl || /\.(?:png|jpg|jpeg|gif|webp|svg|css|js)(?:\?|$)/i.test(watchUrl)) continue;
     try {
-      const detailHtml = await fetchText(detailLink, {
+      const detailHtml = await fetchText(watchUrl, {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       });
       const nested = extractUrlsFromText(detailHtml);
-      for (const nestedUrl of nested) {
-        items.push({ url: nestedUrl, title });
-      }
+      for (const nestedUrl of nested) items.push({ url: nestedUrl, title });
     } catch (error) {
       // continue
     }
@@ -353,6 +364,8 @@ async function searchSite({ providerName, baseUrl, title, type = 'tv', extraPath
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       });
 
+      const watchLinks = extractDetailLinks(html, baseUrl).filter((link) => /(?:\/watch\/|\/anime\/|\/movie\/|\/tv\/|\/info\/|play=true|video=|embed)/i.test(link));
+
       let parsed = [];
       if (typeof parser === 'function') {
         parsed = parser(html, { providerName, baseUrl, title: cleaned, type, extraPaths }) || [];
@@ -362,11 +375,55 @@ async function searchSite({ providerName, baseUrl, title, type = 'tv', extraPath
         parsed = await resolveSearchPage(entry, baseUrl, cleaned, providerName);
       }
 
+      for (const watchLink of watchLinks.slice(0, 8)) {
+        try {
+          const watchHtml = await fetchText(watchLink, {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          });
+          const nested = typeof parser === 'function' ? (parser(watchHtml, { providerName, baseUrl, title: cleaned, type, extraPaths }) || []) : extractUrlsFromText(watchHtml);
+          for (const item of nested) {
+            const finalUrl = item && item.url ? item.url : String(item || '');
+            parsed.push({ url: finalUrl, title: cleaned });
+          }
+        } catch (error) {
+          // continue
+        }
+      }
+
+      const pending = [];
       for (const item of parsed) {
         const finalUrl = item && item.url ? item.url : String(item || '');
         const normalized = cleanUrl(finalUrl);
+        if (!normalized || normalized.startsWith('about:') || normalized.startsWith('javascript:') || normalized.startsWith('data:')) continue;
+
+        if (isLikelyStreamUrl(normalized)) {
+          pending.push({ url: normalized, title: String(item && item.title ? item.title : cleaned) });
+          continue;
+        }
+
+        if (/(?:\/watch\/|\/anime\/|\/movie\/|\/tv\/|\/info\/|play=true|embed|video=)/i.test(normalized)) {
+          try {
+            const detailHtml = await fetchText(normalized, {
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            });
+            const nestedCandidates = extractUrlsFromText(detailHtml);
+            for (const candidate of nestedCandidates) {
+              const nestedUrl = cleanUrl(candidate);
+              if (nestedUrl && isLikelyStreamUrl(nestedUrl)) {
+                pending.push({ url: nestedUrl, title: String(item && item.title ? item.title : cleaned) });
+              }
+            }
+          } catch (error) {
+            // keep resolved watch pages from being treated as final stream URLs
+          }
+        }
+      }
+
+      for (const item of pending) {
+        const normalized = cleanUrl(item.url);
         if (!normalized || discovered.has(normalized)) continue;
         discovered.add(normalized);
+
         const format = normalized.includes('.m3u8') ? 'm3u8' : (normalized.includes('.mpd') ? 'mpd' : 'mp4');
         const streamVariants = buildLanguageVariants({
           url: normalized,
@@ -411,5 +468,6 @@ module.exports = {
   searchSite,
   makeAbsoluteUrl,
   cleanUrl,
+  isHttpUrl,
   isLikelyStreamUrl
 };
